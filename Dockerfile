@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Instalar Git (requerido por dependencias de Baileys), Python 3 y curl
+# Instalar Git, Python 3 y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
