@@ -762,12 +762,17 @@ app.post(['/api/enviar-documento', '/whatsapp/api/enviar-documento'], async (req
         if (connectionStatus !== 'conectado' || !sock) {
             return res.status(400).json({ ok: false, error: "El bot de WhatsApp no está vinculado actualmente. Escanee el código QR en el panel." });
         }
-        const { telefono, filePath, fileName, caption } = req.body;
+        const { telefono, filePath, fileName, caption, fileBase64 } = req.body;
         if (!telefono) {
             return res.status(400).json({ ok: false, error: "Falta el número de teléfono del paciente." });
         }
-        if (!filePath || !fs.existsSync(filePath)) {
-            return res.status(400).json({ ok: false, error: `El archivo de informe no existe: ${filePath}` });
+        let fileBuffer;
+        if (fileBase64) {
+            fileBuffer = Buffer.from(fileBase64, 'base64');
+        } else if (filePath && fs.existsSync(filePath)) {
+            fileBuffer = fs.readFileSync(filePath);
+        } else {
+            return res.status(400).json({ ok: false, error: `El archivo de informe no existe o no fue suministrado.` });
         }
 
         const numLimpio = telefono.replace(/\D/g, '');
@@ -776,13 +781,12 @@ app.post(['/api/enviar-documento', '/whatsapp/api/enviar-documento'], async (req
 
         guardarContacto(jid);
 
-        const fileBuffer = fs.readFileSync(filePath);
-        const mime = filePath.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        const mime = (fileName && fileName.endsWith('.pdf')) || (filePath && filePath.endsWith('.pdf')) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
         await sock.sendMessage(jid, {
             document: fileBuffer,
             mimetype: mime,
-            fileName: fileName || path.basename(filePath),
+            fileName: fileName || (filePath ? path.basename(filePath) : 'Informe_Medico.docx'),
             caption: caption || "Informe Médico - Diagnóstico Citopatológico INLE, C.A."
         });
 
