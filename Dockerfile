@@ -1,24 +1,22 @@
-FROM python:3.10-slim
+FROM node:20-slim
 
-WORKDIR /app
-
-# Instalar dependencias del sistema
+# Instalar Git (requerido por dependencias de Baileys), Python 3 y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
+    git \
+    python3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements e instalar
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-# Copiar código de la aplicación
+# Instalar dependencias de Node
+COPY package*.json ./
+RUN npm install --omit=dev
+
+# Copiar el resto del código
 COPY . .
 
-# Puerto por defecto de Render
 ENV PORT=10000
 EXPOSE 10000
 
-# Ejecutar servidor SIAP
-CMD ["python", "server.py"]
+CMD ["node", "server.js"]
