@@ -1,21 +1,24 @@
-FROM node:20-slim
-
-# Instalar Python 3 para el motor del bot (bot_motor.py y generador_estados.py)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Instalar dependencias de Node
-COPY package*.json ./
-RUN npm install --production
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copiar el resto del código
+# Copiar requirements e instalar
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código de la aplicación
 COPY . .
 
+# Puerto por defecto de Render
 ENV PORT=10000
 EXPOSE 10000
 
-CMD ["node", "server.js"]
+# Ejecutar servidor SIAP
+CMD ["python", "server.py"]
