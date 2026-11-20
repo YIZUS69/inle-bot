@@ -1,17 +1,16 @@
 FROM node:20-slim
 
-# Instalar Git, openssh-client (requerido por dependencias de Baileys), Python 3 y curl
+# Instalar Git, certificados SSL, Python 3 y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    openssh-client \
+    ca-certificates \
     python3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Forzar a git a usar HTTPS en lugar de SSH para GitHub
 RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && \
-    git config --global url."https://github.com/".insteadOf "git@github.com:" && \
-    git config --global url."https://".insteadOf "ssh://"
+    git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 WORKDIR /app
 
