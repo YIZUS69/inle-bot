@@ -20,11 +20,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Configuración de PostgreSQL (Supabase) para persistencia permanente de sesión
+const DB_URL = process.env.DATABASE_URL || "postgresql://postgres.hvspefnnfeqtwarcabow:Cbv5EDr2x8DrJgIF@aws-1-us-east-2.pooler.supabase.com:5432/postgres";
 let pool = null;
-if (process.env.DATABASE_URL) {
+if (DB_URL) {
     try {
         pool = new Pool({
-            connectionString: process.env.DATABASE_URL,
+            connectionString: DB_URL,
             ssl: { rejectUnauthorized: false }
         });
         console.log('[PostgreSQL] Conexión configurada con Supabase.');
