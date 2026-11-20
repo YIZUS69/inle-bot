@@ -14,9 +14,24 @@ const { exec, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Configuración de PostgreSQL (Supabase) para persistencia permanente de sesión
+let pool = null;
+if (process.env.DATABASE_URL) {
+    try {
+        pool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false }
+        });
+        console.log('[PostgreSQL] Conexión configurada con Supabase.');
+    } catch (err) {
+        console.error('[PostgreSQL Error]:', err.message);
+    }
+}
 
 // Prevención de caídas por errores no controlados o desconexiones de socket
 process.on('uncaughtException', (err) => {
@@ -219,11 +234,77 @@ function consultarBotPython(texto) {
     });
 }
 
+// ==============================================================================
+// PERSISTENCIA DE SESIÓN EN SUPABASE (Evita tener que reescanear el QR en Render)
+// ==============================================================================
+async function initSessionTable() {
+    if (!pool) return;
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS whatsapp_session (
+                id VARCHAR(255) PRIMARY KEY,
+                data TEXT NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('[Supabase Auth] Tabla whatsapp_session verificada en Supabase.');
+    } catch (e) {
+        console.error('[Error initSessionTable]:', e.message);
+    }
+}
+
+async function restoreSessionFromDB(authDir) {
+    if (!pool) return;
+    try {
+        if (!fs.existsSync(authDir)) {
+            fs.mkdirSync(authDir, { recursive: true });
+        }
+        const res = await pool.query('SELECT id, data FROM whatsapp_session');
+        if (res.rows && res.rows.length > 0) {
+            console.log(`[Supabase Auth] 📥 Restaurando ${res.rows.length} archivos de sesión desde Supabase...`);
+            for (const row of res.rows) {
+                const filePath = path.join(authDir, row.id);
+                fs.writeFileSync(filePath, row.data, 'utf-8');
+            }
+            console.log('[Supabase Auth] ✅ Sesión de WhatsApp restaurada con éxito desde la nube.');
+        } else {
+            console.log('[Supabase Auth] No hay sesión previa en Supabase. Esperando primer escaneo de QR.');
+        }
+    } catch (e) {
+        console.error('[Error restoreSessionFromDB]:', e.message);
+    }
+}
+
+async function syncAllSessionFilesToDB(authDir) {
+    if (!pool) return;
+    try {
+        if (!fs.existsSync(authDir)) return;
+        const files = fs.readdirSync(authDir);
+        for (const fileName of files) {
+            const filePath = path.join(authDir, fileName);
+            if (fs.statSync(filePath).isFile()) {
+                const fileData = fs.readFileSync(filePath, 'utf-8');
+                await pool.query(`
+                    INSERT INTO whatsapp_session (id, data, updated_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW();
+                `, [fileName, fileData]);
+            }
+        }
+        console.log(`[Supabase Auth] 💾 ${files.length} archivos de sesión respaldados en Supabase.`);
+    } catch (e) {
+        console.error('[Error syncAllSessionFilesToDB]:', e.message);
+    }
+}
+
 /**
  * Inicia la conexión de WhatsApp con Baileys.
  */
 async function conectarWhatsApp() {
     const authDir = path.join(__dirname, 'auth_info_baileys');
+    await initSessionTable();
+    await restoreSessionFromDB(authDir);
+
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -235,7 +316,10 @@ async function conectarWhatsApp() {
         browser: ['INLE Laboratorio', 'Chrome', '1.0.0']
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        syncAllSessionFilesToDB(authDir).catch(() => {});
+    });
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -256,6 +340,7 @@ async function conectarWhatsApp() {
             connectedPhone = sock.user?.id ? sock.user.id.split(':')[0] : 'Conectado';
             console.log(`\n[OK] WhatsApp Conectado exitosamente. Teléfono: +${connectedPhone}`);
             if (sock.user?.id) guardarContacto(sock.user.id);
+            syncAllSessionFilesToDB(authDir).catch(() => {});
         }
 
         if (connection === 'close') {
@@ -270,6 +355,7 @@ async function conectarWhatsApp() {
                 console.log('[Aviso] Sesión cerrada. Limpiando credenciales para nuevo QR...');
                 try {
                     fs.rmSync(authDir, { recursive: true, force: true });
+                    if (pool) pool.query('DELETE FROM whatsapp_session').catch(() => {});
                 } catch (e) {}
                 setTimeout(conectarWhatsApp, 2000);
             }
@@ -652,7 +738,11 @@ app.post(['/api/cerrar-bot', '/whatsapp/api/cerrar-bot', '/api/desconectar'], as
         const authDir = path.join(__dirname, 'auth_info_baileys');
         if (fs.existsSync(authDir)) {
             fs.rmSync(authDir, { recursive: true, force: true });
-            console.log('[OK] Credenciales eliminadas.');
+            console.log('[OK] Credenciales locales eliminadas.');
+        }
+        if (pool) {
+            await pool.query('DELETE FROM whatsapp_session').catch(() => {});
+            console.log('[OK] Sesión eliminada de Supabase.');
         }
 
         setTimeout(() => {
